@@ -73,6 +73,9 @@ using namespace concurrency::streams; // Asynchronous streams
 #define MICRO 0.000001
 #define MILLI 0.001
 
+int openNewFile_flag = 0;   // Lin edit 21.12.13 record whether is opening a new file (ex. blk00000.dat, blk00001.dat...)
+int num_colddata_block = 0; // Lin edit 21.12.13 testing about cold data block number
+
 
 bool CBlockIndexWorkComparator::operator()(const CBlockIndex* pa, const CBlockIndex* pb) const
 {
@@ -901,15 +904,137 @@ static void WriteIPFSHashToDisk(string pindex, string IPFSHash)
     option.create_if_missing = true;
     leveldb::DB::Open(option, path.string(), &db);
     db->Put(leveldb::WriteOptions(), pindex, IPFSHash);
-    cout << path.string();
+    // db->Put(leveldb::WriteOptions(), IPFSHash, nCounts);
     // cout << "WriteIPFSHashToDisk( value = " << pindex << " : " << IPFSHash << ")" << endl;
 
     delete db;
 }
 
+//////////////////////////////////////////////////////////////////////////////
+//
+// LevelDB record file number and ipfs-hash functions
+// author: Lin
+// time  : 2021/12/13
+//
+static void WriteFileAndIPFSHashToDisk(string file_number, string IPFSHash)
+{
+    fs::path path = GetDataDir() / "IPFS";
+    // cout << path << endl;
+
+    leveldb::DB* db;
+    leveldb::Options option;
+    option.create_if_missing = true;
+    leveldb::DB::Open(option, path.string(), &db);
+    db->Put(leveldb::WriteOptions(), file_number, IPFSHash);
+    // cout << "WriteFileAndIPFSHashToDisk( value = " << file_number << " : " << IPFSHash << ")" << endl;
+
+    delete db;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// LevelDB record sequence and block height functions
+// author: Lin
+// time  : 2021/12/13
+//
+static void WriteNumberAndHeightToDisk(string Number, string Height)
+{
+    fs::path path = GetDataDir() / "sequence_table";
+    // cout << path << endl;
+
+    leveldb::DB* db;
+    leveldb::Options option;
+    option.create_if_missing = true;
+    leveldb::DB::Open(option, path.string(), &db);
+    db->Put(leveldb::WriteOptions(), Number, Height);
+    // db->Put(leveldb::WriteOptions(), IPFSHash, nCounts);
+    // cout << "WriteIPFSHashToDisk( value = " << pindex << " : " << IPFSHash << ")" << endl;
+
+    delete db;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// LevelDB update sequence and block height functions
+// author: Lin
+// time  : 2021/12/13
+//
+static void UpdateNumberAndHeightToDisk(string Number, string Height)
+{
+    fs::path path = GetDataDir() / "sequence_table";
+    // cout << path << endl;
+
+    leveldb::DB* db;
+    leveldb::Options option;
+    option.create_if_missing = true;
+    leveldb::DB::Open(option, path.string(), &db);
+    db->Delete(leveldb::WriteOptions(), Number);
+    db->Put(leveldb::WriteOptions(), Number, Height);
+    // db->Put(leveldb::WriteOptions(), IPFSHash, nCounts);
+    // cout << "WriteIPFSHashToDisk( value = " << pindex << " : " << IPFSHash << ")" << endl;
+
+    delete db;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// LevelDB read block height functions
+// author: Lin
+// time  : 2021/12/13
+//
+static string ReadHeightFromDisk(string number)
+{
+    string Height = "";
+    // string nCounts;
+    fs::path path = GetDataDir() / "sequence_table";
+
+    leveldb::DB* db;
+    leveldb::Options option;
+    option.create_if_missing = true;
+    leveldb::DB::Open(option, path.string(), &db);
+    leveldb::Status status = db->Get(leveldb::ReadOptions(), number, &Height);
+    if( !status.ok() && status.IsNotFound() == true ) {
+        delete db;
+        return "-1";
+    }
+
+    // db->Get(leveldb::ReadOptions(), IPFSHash, &nCounts);
+    // cout << "ReadIPFSHashFromDisk( value = " << pindex << " : " << IPFSHash << ")" << endl;
+    delete db;
+
+    return Height;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// LevelDB read IPFS-hash functions
+// author: Lin
+// time  : 2021/12/13
+//
+static string ReadIPFSHashFromDisk(string file_number)
+{
+    string IPFSHash = "";
+    // string nCounts;
+    fs::path path = GetDataDir() / "IPFS";
+
+    leveldb::DB* db;
+    leveldb::Options option;
+    option.create_if_missing = true;
+    leveldb::DB::Open(option, path.string(), &db);
+    db->Get(leveldb::ReadOptions(), file_number, &IPFSHash);
+    // db->Get(leveldb::ReadOptions(), IPFSHash, &nCounts);
+    // cout << "ReadIPFSHashFromDisk( value = " << pindex << " : " << IPFSHash << ")" << endl;
+    delete db;
+
+    return IPFSHash;
+}
+
+// edit Lin 2021.12.13 ----I comment out here because I'm using above function (just changing input name)
+/*
 static string ReadIPFSHashFromDisk(string pindex)
 {
     string IPFSHash = "";
+    // string nCounts;
     fs::path path = GetDataDir() / "IPFS";
 
     leveldb::DB* db;
@@ -917,11 +1042,116 @@ static string ReadIPFSHashFromDisk(string pindex)
     option.create_if_missing = true;
     leveldb::DB::Open(option, path.string(), &db);
     db->Get(leveldb::ReadOptions(), pindex, &IPFSHash);
+    // db->Get(leveldb::ReadOptions(), IPFSHash, &nCounts);
     // cout << "ReadIPFSHashFromDisk( value = " << pindex << " : " << IPFSHash << ")" << endl;
     delete db;
 
     return IPFSHash;
 }
+*/
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// LevelDB using ipfs-get to get file data functions (not working!!!)
+// author: Lin
+// time  : 2021/12/13
+//
+static void GetDataFromIPFS(int File_num, string str)
+{
+    stringstream_t temp_str;
+    string str_FileNum;
+    temp_str << setw(5) << setfill('0') << File_num;
+    temp_str >> str_FileNum;
+
+    // set path
+    string file_name("/root/.bitcoin/regtest/blocks/blk");
+    file_name = file_name + str_FileNum + ".dat";
+
+    // ---- change api from /object/get to /get ---- Lin 20190902
+    string request_uri = "/api/v0/get?arg=" + str + "&output=" + file_name;
+    http_client client(U("http://127.0.0.1:5001"));
+    http_request request(methods::POST);
+    // request.set_request_uri("/api/v0/object/get?arg=QmaaqrHyAQm7gALkRW8DcfGX3u8q9rWKnxEMmf7m9z515w&encoding=json");
+    request.set_request_uri(request_uri);
+    pplx::task<http_response> responses = client.request(request);
+    pplx::task<string> responseStr = responses.get().extract_string();
+    // cout << "Response json:\n" << responseStr.get() << endl;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// use to decode the data (transfer hex string into int)
+// author: Lin
+// time  : 2021/01/06
+//
+int MapToInt( char input )
+{
+
+    char map_table[16] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    for( int i = 0; i < 16; i++ ){
+        if( input == map_table[i] ) return i;
+    }
+
+    return -1;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// LevelDB using ipfs-cat to cat file data and write into a file functions (have some problem!!!)
+// author: Lin
+// time  : 2021/12/13
+//
+static void GetFileFromIPFS(int File_num, string str)
+{
+    // ---- change api from /object/get to /cat ---- Hank 20190902
+    string request_uri = "/api/v0/cat?arg=" + str;
+    http_client client(U("http://127.0.0.1:5001"));
+    http_request request(methods::POST);
+    // request.set_request_uri("/api/v0/object/get?arg=QmaaqrHyAQm7gALkRW8DcfGX3u8q9rWKnxEMmf7m9z515w&encoding=json");
+    request.set_request_uri(request_uri);
+    pplx::task<http_response> responses = client.request(request);
+    pplx::task<string> responseStr = responses.get().extract_string();
+    // cout << "Response json:\n" << responseStr.get() << endl;
+
+    stringstream_t temp_str;
+    string str_FileNum;
+    temp_str << setw(5) << setfill('0') << File_num;
+    temp_str >> str_FileNum;
+    // ex. 3 --> 00003
+    // cout << "str_filenum " << str_FileNum << endl;
+
+    // set path
+    string file_name("/root/.bitcoin/regtest/blocks/blk");
+    file_name = file_name + str_FileNum + ".dat";
+    ofstream out_file;
+
+    // write data into file
+    out_file.open(file_name, ios::out|ios::trunc);
+
+    cout << "size = " << (responseStr.get()).size() << endl;
+    cout << "length = " << (responseStr.get()).length() << endl;
+
+    // problem here !!!!!!!!!!!!!!
+    // loop (responseStr.get()).length() will run so long that stop writing File data
+    // loop 1200 just to testing whether the file getting back is good or not.
+    for( int i = 1; i < 1200; )
+    {
+        // this decoding method is looking at https://docs.microsoft.com/zh-tw/dotnet/csharp/programming-guide/types/how-to-convert-between-hexadecimal-strings-and-numeric-types 
+        // (change hex string to hex value)
+        int temp1 = MapToInt((responseStr.get())[i-1]);
+        int temp2 = MapToInt((responseStr.get())[i]);
+        int temp = temp1 * 16 + temp2;
+
+        char decode_data = char(temp);
+
+        out_file << decode_data;
+        i += 2;
+        // cout << decode_data;
+    }
+    // cout << endl;
+    out_file.close();
+}
+
 //////////////////////////////////////////////////////////////////////////////
 //
 // ipfs connection functions
@@ -949,7 +1179,7 @@ static void GetFromIPFS(CBlock& block, string str)
 
     string temp = "";
     string blockHex = Response.serialize();
-    // cout << "blockHex:\n" << blockHex << endl;
+    cout << "blockHex:\n" << blockHex << endl;
 
     block.nVersion = atoi(Response["nVersion"].serialize());
     // cout << "nVersion: " << atoi(Response["nVersion"].serialize()) << endl;
@@ -992,6 +1222,13 @@ static string AddToIPFS(string str)
     http_client client(U("http://127.0.0.1:5001/api/v0/add"));
     http_request request(methods::POST);
 
+    // stringstream_t temp_str;
+    // string str_FileNum;
+    // temp_str << setw(5) << setfill('0') << File_num;
+    // temp_str >> str_FileNum;
+    // string file_name("/root/.bitcoin/regtest/blocks/blk");
+    // file_name = file_name + str_FileNum + ".dat";
+
     string textBoundary = "--FORMBOUNDARY--";
     string textBody = "";
     textBody += "--" + textBoundary + "\r\n";
@@ -1017,12 +1254,12 @@ static string AddToIPFS(string str)
     // cout << "responses body \n" << s.get() << endl;
     return s.get();
 }
+
 //////////////////////////////////////////////////////////////////////////////
 // Author : Hank
 // Date : 20190817
 // Using Cpprest construct the block json
 
-/*
 void CppRestProccessVoutToJson(CTxOut tx_Out, int counter, json::value& Vout)
 {
     string test = HexStr(tx_Out.scriptPubKey);
@@ -1056,7 +1293,7 @@ void CppRestProccessVinToJson(CTxIn tx_in, int counter, json::value& Vin)
     Vin["CTxIn"][counter]["COutPoint"]["hash"] = json::value::string(tx_in.prevout.hash.ToString());
     Vin["CTxIn"][counter]["COutPoint"]["n"] = json::value::number(tx_in.prevout.n);
 }
-*/
+
 
 void CppRestProccessVtxToJson(vector<CTransactionRef> vtx, int vtx_size, json::value& root)
 {
@@ -1118,6 +1355,11 @@ void CppRestConstructBlockToJson(CBlock block, json::value& root)
     CppRestProccessVtxToJson(block.vtx, block.vtx.size(), root);
 
     // cout << "Construction completed...." << endl;
+}
+
+void CppRestConstructFileToJson(string content, json::value& root)
+{
+    root["data"] = json::value::string(content);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1182,13 +1424,15 @@ bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus
         blockPos = pindex->GetBlockPos();
         // cout << "Height : " << pindex->nHeight << endl;	
     }
-    // ---- Read Block From Disk ---- henry 20190723
-    //string IPFShash = ReadIPFSHashFromDisk(to_string(pindex->nHeight));
-
-    // cout << "Getting block from this hash:" << IPFShash << endl;
-    // ---- Get IPFS file by IPFShash ----
-    //block.SetNull();
-    //GetFromIPFS(block, IPFShash);
+    // // ---- Read Block From sequence table ---- Lin 20211213
+    // string IPFShash = ReadIPFSHashFromDisk(to_string(blockPos.nFile));
+    // // ---- Read Block From Disk ---- henry 20190723
+    // string IPFShash = ReadIPFSHashFromDisk(to_string(pindex->nHeight));
+    // // cout << "Getting block from this hash:" << IPFShash << endl;
+    // // ---- Get IPFS file by IPFShash ----
+    // block.SetNull();
+    // GetFromIPFS(block, IPFShash);
+    // GetFileFromIPFS(blockPos.nFile, IPFShash); // ---- Get IPFS file by IPFShash ---- Lin 20211213 (not working well!!!)
     
     ///* Do not use levelDB ----Hanry 20191209
     if (!ReadBlockFromDisk(block, blockPos, consensusParams))
@@ -3127,13 +3371,21 @@ static bool FindBlockPos(FlatFilePos& pos, unsigned int nAddSize, unsigned int n
         vinfoBlockFile.resize(nFile + 1);
     }
 
+    // ------------edit Lin 20211213 ------ check some info.
+    // cout << "nFile " << nFile << endl; 
+    // cout << "pos nFile " << pos.nFile << endl;
+    // cout << "pos nPos " << pos.nPos << endl;
+
     if (!fKnown) {
         while (vinfoBlockFile[nFile].nSize + nAddSize >= MAX_BLOCKFILE_SIZE) {
             nFile++;
             if (vinfoBlockFile.size() <= nFile) {
                 vinfoBlockFile.resize(nFile + 1);
             }
+            // ------------edit Lin 20211213 ------ setting flag.
+            openNewFile_flag = 1;
         }
+        // nFile 是blk檔後面的編號(ex. blk00000.dat  nFile = 0)
         pos.nFile = nFile;
         pos.nPos = vinfoBlockFile[nFile].nSize;
     }
@@ -3583,7 +3835,7 @@ static FlatFilePos SaveBlockToDisk(const CBlock& block, int nHeight, const CChai
 {
     unsigned int nBlockSize = ::GetSerializeSize(block, CLIENT_VERSION);
     FlatFilePos blockPos;
-    cout << "saveblock" << endl;
+    // cout << "saveblock" << endl;
     if (dbp != nullptr)
         blockPos = *dbp;
     if (!FindBlockPos(blockPos, nBlockSize + 8, nHeight, block.GetBlockTime(), dbp != nullptr)) {
@@ -3591,39 +3843,47 @@ static FlatFilePos SaveBlockToDisk(const CBlock& block, int nHeight, const CChai
         return FlatFilePos();
     }
     if (dbp == nullptr) {
-/*	
-        // Add block json to IPFS (moved from writeblockToDisk) 2019/8/13
-        // Change json construction function to solve memory leak problem.
-        // author: Hank
-        // time  : 2019/8/17
-        // cout << "Processing Height: " << nHeight << endl;
-        
-	json::value root;
-        CppRestConstructBlockToJson(block, root);
-        string blockjson = root.serialize();
-        string ResponseJson = AddToIPFS(blockjson);
-        
-	// sometimes this command doesn't work.... Hank 20190817
-         cout << blockjson << endl;
-        // Only need the hash value from the response json.  That's why I did the following things to pop it. Hank 20190817
-        stringstream_t s;
-        s << ResponseJson;
-        json::value Response = json::value::parse(s);
-        string IPFSHash;
-        IPFSHash = Response["Hash"].serialize();
-        IPFSHash.erase(0, IPFSHash.find_first_not_of("\""));
-        IPFSHash.erase(IPFSHash.find_last_not_of("\"") + 1);
-        cout << "IPFSHash: " << IPFSHash << endl;
 
-        // ---- Write IPFS-HASH To Disk ----Hank 20190730
-        WriteIPFSHashToDisk(to_string(nHeight), IPFSHash);
-*/        
-	///* Do not use levelDB ----Hanry 20191209
+        // ----- Lin 2021.12.13 I comment out here
+        // // Add block json to IPFS (moved from writeblockToDisk) 2019/8/13
+        // // Change json construction function to solve memory leak problem.
+        // // author: Hank
+        // // time  : 2019/8/17
+        // // cout << "Processing Height: " << nHeight << endl;
+        
+        // json::value root;
+        // CppRestConstructBlockToJson(block, root);
+        // string blockjson = root.serialize();
+        // string ResponseJson = AddToIPFS(blockjson);
+        
+        // // sometimes this command doesn't work.... Hank 20190817
+        // cout << blockjson << endl;
+        // // Only need the hash value from the response json.  That's why I did the following things to pop it. Hank 20190817
+        // stringstream_t s;
+        // s << ResponseJson;
+        // json::value Response = json::value::parse(s);
+        // string IPFSHash;
+        // IPFSHash = Response["Hash"].serialize();
+        // IPFSHash.erase(0, IPFSHash.find_first_not_of("\""));
+        // IPFSHash.erase(IPFSHash.find_last_not_of("\"") + 1);
+        // cout << "IPFSHash: " << IPFSHash << endl;
+
+        // CBlockIndex* block_pindex = nullptr;
+        // block_pindex = LookupBlockIndex(block.GetHash());
+
+        // // ---- Write IPFS-HASH To Disk ----Hank 20190730
+        // WriteIPFSHashToDisk(to_string(nHeight), IPFSHash);
+        // // cout << endl << "Upload Success!" << endl;
+ 
+        // ----- Lin 2021.12.13 I open here beacause it will error when connecting another node 
+        // (I guess the reason is about ./.bitcoin/regtest/blocks/blk00000.dat is empty)
+	    ///* Do not use levelDB ----Hanry 20191209
         if (!WriteBlockToDisk(block, blockPos, chainparams.MessageStart())) {
             AbortNode("Failed to write block");
             return FlatFilePos();
-        }	
-           
+        }
+        // cout << "block position" << blockPos.ToString() << endl;
+
     }
     return blockPos;
 }
@@ -3709,10 +3969,327 @@ bool CChainState::AcceptBlock(const std::shared_ptr<const CBlock>& pblock, CVali
     return true;
 }
 
+//////////////////////////////////////////////////////////////////////////////
+//
+// print sequence table functions (use for checking working-set is working good or not)
+// author: Lin
+// time  : 2021/12/13
+//
+void print_levelDB()
+{
+    string Height;
+    int i = 0;
+    int ret;
+    cout << "Number   Height" << endl;
+    cout << "-----------------------" << endl;
+    Height = ReadHeightFromDisk(to_string(i));
+    ret = Height.compare("-1");
+    while( ret != 0 ){
+        cout << i << " " << Height << endl;
+        i++;
+        Height = ReadHeightFromDisk(to_string(i));
+        ret = Height.compare("-1");
+    }
+    cout << "-----------------------" << endl;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// using simple methods to delete local data functions (this function has some problem.)
+// author: Lin
+// time  : 2021/12/13
+//
+void delete_local_Colddata(int target)
+{
+    cout << "delete local" << endl;
+    int count_block = -1;
+    char *file_Old = "/root/.bitcoin/regtest/blocks/blk00000.dat";
+    char *file_New = "/root/.bitcoin/regtest/blocks/tmp.dat";
+    char *file_Cold = "/root/.bitcoin/regtest/blocks/cold.dat";
+    unsigned char old_buffer[20];
+    // char cmp_buf[20];
+    // char *block_head = "fabfb5da";
+    // uint256 block_head = uint256S("0xbffadab5");
+    
+    // Open 3 files.
+    FILE *oldfp = fopen( file_Old, "r" );
+    FILE *newfp = fopen( file_New, "w" );
+    FILE *coldfp = fopen( file_Cold, "a" );
+
+    // initialize.
+    memset( old_buffer, 0, 20 );
+
+    if( oldfp != NULL && newfp != NULL && coldfp != NULL ) {
+        cout << "fread local" << endl;
+
+        // use loop to read and write file.
+        while( fread( old_buffer, 4, sizeof(char), oldfp ) != 0 ) {
+
+            // find block's boundry (0xfabfb5da).
+            if( old_buffer[0] == 0xfa && old_buffer[1] == 0xbf && old_buffer[2] == 0xb5 && old_buffer[3] == 0xda ) {
+                count_block++;
+                // cout << "count_block = " << count_block << endl;
+
+                // cold data process (write to cold.dat file).
+                if( count_block == (target-num_colddata_block) ) {
+                    fwrite( old_buffer, 4, sizeof(char), coldfp );
+                    while( fread( old_buffer, 4, sizeof(char), oldfp ) != 0 ) {
+                        if( old_buffer[0] == 0xfa && old_buffer[1] == 0xbf && old_buffer[2] == 0xb5 && old_buffer[3] == 0xda ) {
+                            count_block++;
+                            break;
+                        }
+                        fwrite( old_buffer, 4, sizeof(char), coldfp );
+                    }
+                }
+            }
+            fwrite( old_buffer, 4, sizeof(char), newfp );
+        }
+    }
+    fclose(oldfp);
+    fclose(newfp);
+    fclose(coldfp);
+
+    // record number of cold data block.
+    num_colddata_block++;
+    // cout << "cold " << num_colddata_block << endl;
+    // remove old blk.dat and rename tmp.dat to blk.dat(new).
+    remove(file_Old);
+    rename(file_New, file_Old);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// using working-set methods to implement sequence table functions
+// author: Lin
+// time  : 2021/12/13
+//
+void Colddata_proccess_File(const std::shared_ptr<const CBlock> pblock, const CChainParams& params)
+{
+    // LOCK(cs_main);
+    CBlockIndex* present_pindex = nullptr;
+
+    // get block index for checking it's nHeight.
+    present_pindex = LookupBlockIndex(pblock->GetHash());
+    // cout << endl << "Present nHeight = " << present_pindex->nHeight << endl;
+
+    cout << "Pblock hash: " << pblock->GetHash().ToString() << endl;
+    cout << "Before:" << endl;
+    print_levelDB();
+
+    string Height;
+    string cold_Height;
+    // ex. 0 - 19(total 20 blocks)
+    for( int num = 0; num < 20; num++ ) {
+
+        Height = ReadHeightFromDisk(to_string(num));
+        // find the end of database.
+        if( Height.compare("-1") == 0 ) {
+            WriteNumberAndHeightToDisk(to_string(num), to_string(present_pindex->nHeight));
+            break;
+        }
+        else {
+            // found the same Height. (i.e. store the same thing again)
+            if( Height.compare(to_string(present_pindex->nHeight)) == 0 ){
+                if( num != 19 ){
+                    int tmp = num + 1;
+                    Height = ReadHeightFromDisk(to_string(tmp));
+                    while( Height.compare("-1") != 0 ){
+                        // number 1 - X blocks write to number 0 - (X-1).
+                        UpdateNumberAndHeightToDisk(to_string(tmp-1), Height);
+                        tmp++;
+                        Height = ReadHeightFromDisk(to_string(tmp));
+                    }
+                    UpdateNumberAndHeightToDisk(to_string(tmp-1), to_string(present_pindex->nHeight));
+                }
+                else if( num == 19 ){
+                    UpdateNumberAndHeightToDisk(to_string(num), to_string(present_pindex->nHeight));
+                }
+            }
+            // i.e. database is full.(20 blocks)
+            else if( num == 19 ) {
+                cold_Height = ReadHeightFromDisk(to_string((int)0));
+                for( int i = 1; i < 20; i++ ){
+                    // number 1-19 blocks write to number 0-18.
+                    Height = ReadHeightFromDisk(to_string(i));
+                    UpdateNumberAndHeightToDisk(to_string(i-1), Height);
+                }
+                WriteNumberAndHeightToDisk(to_string((int)19), to_string(present_pindex->nHeight));
+            }
+            else continue;
+        }
+
+    }
+
+    cout << "After:" << endl;
+    print_levelDB();
+
+    // Upload to IPFS ---------------------------------
+    // if(openNewFile_flag == 1){ // ---- check opening new file or not
+        stringstream_t temp_str;
+        string content;
+        string str_FileNum;
+        // int pre_file_num = present_pindex->nFile - 1;
+        // // ex. 3 --> 00003
+        // temp_str << setw(5) << setfill('0') << pre_file_num;
+
+        // this use for test.
+        temp_str << setw(5) << setfill('0') << present_pindex->nFile;
+
+        temp_str >> str_FileNum;
+        // cout << "str_filenum " << str_FileNum << endl;
+        // set path
+        string file_name("/root/.bitcoin/regtest/blocks/blk");
+        file_name = file_name + str_FileNum + ".dat";
+        ifstream file;
+        //read data in file
+        file.open(file_name, ios::in);
+        getline(file, content);
+
+        // json::value root;
+        // CppRestConstructFileToJson(content, root);
+        // string blockjson = root.serialize();
+        // cout << "block json " << endl << blockjson << endl;
+        string ResponseJson = AddToIPFS(HexStr(content));
+        // cout << endl << "file content: " << HexStr(content) << endl;
+        // string ResponseJson = AddToIPFS(content);
+        // Only need the hash value from the response json.  That's why I did the following things to pop it. Hank 20190817
+        stringstream_t s;
+        s << ResponseJson;
+        json::value Response = json::value::parse(s);
+        string IPFSHash;
+        IPFSHash = Response["Hash"].serialize();
+        IPFSHash.erase(0, IPFSHash.find_first_not_of("\""));
+        IPFSHash.erase(IPFSHash.find_last_not_of("\"") + 1);
+        cout << "IPFSHash: " << IPFSHash << endl;
+        file.close();
+        // ---- Write IPFS-HASH To Disk ----Hank 20190730
+        WriteFileAndIPFSHashToDisk(str_FileNum, IPFSHash);
+
+        remove(file_name.c_str());
+    //     openNewFile_flag = 0;	
+    // }
+    // -----------------------------------------------------
+    // delete_local_Colddata(target_nHeight);
+
+
+    string read_IPFShash = ReadIPFSHashFromDisk(str_FileNum);
+    cout << "Read IPFShash- " << read_IPFShash << endl;
+
+    // -----below code is testing about GetFileFromIPFS & GetDataFromIPFS function working good or not
+    GetFileFromIPFS(present_pindex->nFile, read_IPFShash);
+    // GetDataFromIPFS(present_pindex->nFile, read_IPFShash);
+
+}
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// using simple methods (just setting threshold to split cold/hot data) to implement cold-hot data functions
+// author: Lin
+// time  : 2021/12/13
+//
+void Colddata_proccess(const std::shared_ptr<const CBlock> pblock, const CChainParams& params)
+{
+    CBlockIndex* present_pindex = nullptr;
+    int target_nHeight = -1;
+
+    // get block index for checking it's nHeight.
+    present_pindex = LookupBlockIndex(pblock->GetHash());
+    cout << endl << "Present nHeight = " << present_pindex->nHeight << endl;
+
+    cout << "Before:" << endl;
+    print_levelDB();
+
+    string Height;
+    string cold_Height;
+    // ex. 0 - 19(total 20 blocks)
+    for( int num = 0; num < 20; num++ ) {
+        Height = ReadHeightFromDisk(to_string(num));
+        // find the end of database.
+        if( Height.compare("-1") == 0 ) {
+            WriteNumberAndHeightToDisk(to_string(num), to_string(present_pindex->nHeight));
+            break;
+        }
+        else {
+            // found the same Height. (i.e. store the same thing again)
+            if( Height.compare(to_string(present_pindex->nHeight)) == 0 ){
+                if( num != 19 ){
+                    int tmp = num + 1;
+                    Height = ReadHeightFromDisk(to_string(tmp));
+                    while( Height.compare("-1") != 0 ){
+                        // number 1 - X blocks write to number 0 - (X-1).
+                        UpdateNumberAndHeightToDisk(to_string(tmp-1), Height);
+                        tmp++;
+                        Height = ReadHeightFromDisk(to_string(tmp));
+                    }
+                    UpdateNumberAndHeightToDisk(to_string(tmp-1), to_string(present_pindex->nHeight));
+                }
+                else if( num == 19 ){
+                    UpdateNumberAndHeightToDisk(to_string(num), to_string(present_pindex->nHeight));
+                }
+            }
+            // i.e. database is full.(20 blocks)
+            else if( num == 19 ) {
+                cold_Height = ReadHeightFromDisk(to_string((int)0));
+                target_nHeight = stoi(cold_Height);
+                for( int i = 1; i < 20; i++ ){
+                    // number 1-19 blocks write to number 0-18.
+                    Height = ReadHeightFromDisk(to_string(i));
+                    UpdateNumberAndHeightToDisk(to_string(i-1), Height);
+                }
+                WriteNumberAndHeightToDisk(to_string((int)19), to_string(present_pindex->nHeight));
+            }
+            else continue;
+        }
+
+    }
+
+    cout << "After:" << endl;
+    print_levelDB();
+
+    if( target_nHeight >= 0 ) {
+        CBlockIndex* ColdBlock_pindex = nullptr;
+
+        // get previous block index.
+        ColdBlock_pindex = LookupBlockIndex(pblock->hashPrevBlock); 
+
+        // Using loop to find the target nHeight.
+        while( ColdBlock_pindex->nHeight != target_nHeight && ColdBlock_pindex->nHeight >= 0 ) {
+            
+            // find previous block index.
+            ColdBlock_pindex = ColdBlock_pindex->pprev;
+        }
+
+        CBlock upload_pblock;
+        ReadBlockFromDisk(upload_pblock, ColdBlock_pindex, params.GetConsensus());
+
+        // Upload to IPFS ---------------------------------
+        json::value root;
+        CppRestConstructBlockToJson(upload_pblock, root);
+        string blockjson = root.serialize();
+        string ResponseJson = AddToIPFS(blockjson);
+        // sometimes this command doesn't work.... Hank 20190817
+        // cout << blockjson << endl;
+        // Only need the hash value from the response json.  That's why I did the following things to pop it. Hank 20190817
+        stringstream_t s;
+        s << ResponseJson;
+        json::value Response = json::value::parse(s);
+        string IPFSHash;
+        IPFSHash = Response["Hash"].serialize();
+        IPFSHash.erase(0, IPFSHash.find_first_not_of("\""));
+        IPFSHash.erase(IPFSHash.find_last_not_of("\"") + 1);
+        cout << "IPFSHash: " << IPFSHash << endl;
+        // ---- Write IPFS-HASH To Disk ----Hank 20190730
+        WriteIPFSHashToDisk(to_string(ColdBlock_pindex->nHeight), IPFSHash);
+        // -----------------------------------------------------
+        // delete_local_Colddata(target_nHeight);
+        GetFromIPFS(upload_pblock, IPFSHash);
+    }
+}
+
 bool ProcessNewBlock(const CChainParams& chainparams, const std::shared_ptr<const CBlock> pblock, bool fForceProcessing, bool* fNewBlock)
 {
+    // CBlockIndex* test_pindex = nullptr;
     AssertLockNotHeld(cs_main);
-    CBlockIndex* test_pindex = nullptr;
     {
         CBlockIndex* pindex = nullptr;
         if (fNewBlock) *fNewBlock = false;
@@ -3728,12 +4305,13 @@ bool ProcessNewBlock(const CChainParams& chainparams, const std::shared_ptr<cons
         if (ret) {
             // Store to disk
             ret = ::ChainstateActive().AcceptBlock(pblock, state, chainparams, &pindex, fForceProcessing, nullptr, fNewBlock);
+            (pindex->nCount)++; // record block number --- Lin 2021/12/13
         }
         if (!ret) {
             GetMainSignals().BlockChecked(*pblock, state);
             return error("%s: AcceptBlock FAILED (%s)", __func__, FormatStateMessage(state));
         }
-	test_pindex = pindex;
+	    // test_pindex = pindex;
     }
 
     NotifyHeaderTip();
@@ -3741,48 +4319,44 @@ bool ProcessNewBlock(const CChainParams& chainparams, const std::shared_ptr<cons
     CValidationState state; // Only used to report errors, not invalidity - ignore it
     if (!::ChainstateActive().ActivateBestChain(state, chainparams, pblock))
         return error("%s: ActivateBestChain failed (%s)", __func__, FormatStateMessage(state));
-    
-    // --- Move Hank code to here ---Lin 20211008
-    
-    // Add block json to IPFS (moved from writeblockToDisk) 2019/8/13
-    // Change json construction function to solve memory leak problem.
-    // author: Hank
-    // time  : 2019/8/17
-    // cout << "Processing Height: " << nHeight << endl;
-    json::value root;
-    CppRestConstructBlockToJson(*pblock, root);
-    string blockjson = root.serialize();
-    string ResponseJson = AddToIPFS(blockjson);
-    // sometimes this command doesn't work.... Hank 20190817
-    // cout << blockjson << endl;
-    // Only need the hash value from the response json.  That's why I did the following things to pop it. Hank 20190817
-    stringstream_t s;
-    s << ResponseJson;
-    json::value Response = json::value::parse(s);
-    string IPFSHash;
-    IPFSHash = Response["Hash"].serialize();
-    IPFSHash.erase(0, IPFSHash.find_first_not_of("\""));
-    IPFSHash.erase(IPFSHash.find_last_not_of("\"") + 1);
-    //cout << "IPFSHash: " << IPFSHash << endl;
-    
-    // ---- Write IPFS-HASH To Disk ----Hank 20190730
-    WriteIPFSHashToDisk(to_string(test_pindex->nHeight), IPFSHash);
+
+    // edit Lin 2021.12.13 -- data processing and uploading to ipfs
+    Colddata_proccess_File(pblock, chainparams); 
+
+    // Colddata_proccess(pblock, chainparams);
+    // Colddata_proccess(::ChainActive().Tip()->nHeight, pblock, chainparams);
+
+    // if( openNewFile_flag == 1 ) {
+
+    //     // --- Move Hank code to here ---Lin 20211008
+    //     // Add block json to IPFS (moved from writeblockToDisk) 2019/8/13
+    //     // Change json construction function to solve memory leak problem.
+    //     // author: Hank
+    //     // time  : 2019/8/17
+    //     // cout << "Processing Height: " << nHeight << endl;
+    //     json::value root;
+    //     CppRestConstructBlockToJson(*pblock, root);
+    //     string blockjson = root.serialize();
+    //     string ResponseJson = AddToIPFS(blockjson);
+    //     // sometimes this command doesn't work.... Hank 20190817
+    //     cout << blockjson << endl;
+    //     // Only need the hash value from the response json.  That's why I did the following things to pop it. Hank 20190817
+    //     stringstream_t s;
+    //     s << ResponseJson;
+    //     json::value Response = json::value::parse(s);
+    //     string IPFSHash;
+    //     IPFSHash = Response["Hash"].serialize();
+    //     IPFSHash.erase(0, IPFSHash.find_first_not_of("\""));
+    //     IPFSHash.erase(IPFSHash.find_last_not_of("\"") + 1);
+    //     cout << "IPFSHash: " << IPFSHash << endl;
+
+    //     // ---- Write IPFS-HASH To Disk ----Hank 20190730
+    //     WriteIPFSHashToDisk(to_string(test_pindex->nHeight), IPFSHash);
+    //     cout << endl << "Upload Success!" << endl;
+    //     openNewFile_flag = 0;
+    // }
     // ---------------------------------
-
-    // ---- Delete local file ----Lin 20211008
-    char *blkPath = "/root/.bitcoin/regtest/blocks/blk00000.dat";
-    //char *blkPath = "/root/test_delete.c";
-    if(remove(blkPath)==0)
-    {
-        cout << endl << "delete success" << endl;
-    }
-    else
-    {
-        cout << endl << "delete error" << endl;
-    }
-    cout << strerror(errno);
-    // ---------------------------
-
+    
     return true;
 }
 
